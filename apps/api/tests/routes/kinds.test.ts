@@ -71,6 +71,11 @@ describe('kind root manifest admission API', () => {
       }),
     )
     expect((await authoring.json()).ok).toBe(false)
+    const mismatched = await app.handle(new Request('http://localhost/api/manifest/validate', {
+      method: 'POST', headers,
+      body: JSON.stringify({ kind: 'unconfigured-kind', text: JSON.stringify({ name: 'demo', version: '1.0.0', kind: 'provider' }) }),
+    }))
+    expect((await mismatched.json()).ok).toBe(false)
   })
 })
 
