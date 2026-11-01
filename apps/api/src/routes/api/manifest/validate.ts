@@ -33,7 +33,10 @@ export default new Elysia()
 
       const declaredKind = typeof parsed.kind === 'string' ? parsed.kind : null
       if (body.kind && declaredKind && body.kind !== declaredKind) {
-        return { ok: false, errors: [{ path: '/kind', code: 'kind_mismatch', message: 'Selected kind must match the manifest kind' }] }
+        return {
+          ok: false,
+          errors: [{ path: '/kind', code: 'kind_mismatch', message: 'Selected kind must match the manifest kind' }],
+        }
       }
       const schema = buildMergedSchema({ kind: declaredKind ?? body.kind ?? null })
       const result = validateManifest(parsed, schema) // strict, no lenient
