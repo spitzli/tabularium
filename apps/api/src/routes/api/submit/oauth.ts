@@ -6,10 +6,10 @@ import { plugins } from '$db/schema'
 import { deriveSlug } from '$lib/slug'
 import { parseRepoUrl, checkOwnership } from '$lib/providers'
 import { setupWebhook } from '$lib/setup-webhook'
-import { getValidAccessToken, OAuthExpiredError } from '$lib/oauth-tokens'
+import { getValidAccessToken, OAuthExpiredError, UpstreamUnauthorizedError } from '$lib/oauth-tokens'
 import { env } from '$lib/env'
 import { getSetting } from '$lib/settings'
-import { resolveManifest, rawContentBase, ManifestValidationError } from '$lib/manifest'
+import { resolveSubmissionManifest, rawContentBase, ManifestValidationError } from '$lib/manifest'
 import { manifestPatch, readmePayloadOf, applyManifestToPlugin } from '$lib/manifest-apply'
 import { fetchLatestRelease } from '$lib/release-fetch'
 import { persistRelease, hashReleaseAssetsAsync, manifestSha256 } from '$lib/release-ingest'
@@ -76,14 +76,22 @@ export default new Elysia()
       // without a manifest fall back to a sanitized repository name.
       // We fetch the latest release here too so we can ingest it below
       // without re-doing the work.
-      const latestRelease = await fetchLatestRelease(accessToken, ref).catch((err) => {
+      let latestRelease
+      try {
+        latestRelease = await fetchLatestRelease(accessToken, ref)
+      } catch (err) {
+        if (err instanceof UpstreamUnauthorizedError) {
+          set.status = 401
+          return { error: 'OAuth token expired', reauthFor: err.providerInstanceId }
+        }
         log.warn({ err, repo: ref.repo }, 'latest-release lookup failed at submit')
-        return null
-      })
-      let preflightManifest: Awaited<ReturnType<typeof resolveManifest>> = null
+        set.status = 503
+        return { error: 'Published releases could not be inspected. Retry before submitting.' }
+      }
+      let preflightManifest: Awaited<ReturnType<typeof resolveSubmissionManifest>> = null
       try {
         if (latestRelease) {
-          preflightManifest = await resolveManifest(accessToken, ref, { ref: latestRelease.tag })
+          preflightManifest = await resolveSubmissionManifest(accessToken, ref, latestRelease)
         }
       } catch (err) {
         if (err instanceof ManifestValidationError) {
@@ -232,6 +240,7 @@ export default new Elysia()
         409: t.Object({ error: t.String() }),
         412: t.Object({ error: t.String() }),
         422: t.Object({ error: t.String(), errors: t.Optional(t.Array(t.Any())) }),
+        503: t.Object({ error: t.String() }),
       },
     },
   )

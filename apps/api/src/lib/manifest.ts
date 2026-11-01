@@ -14,6 +14,8 @@ import {
 import { buildMergedSchema } from './manifest-schema'
 import { getKinds, getKind } from './kinds'
 import { getSetting } from './settings'
+import { fetchWithGuards } from './asset'
+import { assertManifestVersionMatches, ManifestVersionMismatchError } from './semver'
 import type { ValidationError } from '@tabularium/manifest'
 
 const log = logger.child({ module: 'manifest' })
@@ -242,18 +244,39 @@ export async function fetchReleaseAssetList(
   }
 }
 
-async function fetchAssetContent(url: string, accessToken: string): Promise<{ content: string; bytes: number } | null> {
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${accessToken}`,
-    'User-Agent': 'tabularium/1.0',
+async function fetchAssetContent(url: string): Promise<{ content: string; bytes: number } | null> {
+  // Integrity hashing also requires public assets. Forge OAuth is only for the
+  // repository/README fetcher; release links and CDN redirects never receive it.
+  const res = await fetchWithGuards(url)
+  if (!res.ok) {
+    await res.body?.cancel()
+    if (res.status === 404) return null
+    throw new Error(`Asset fetch failed: ${res.status}`)
   }
-  const res = await fetch(url, { headers, redirect: 'follow' })
-  if (res.status === 404) return null
-  if (!res.ok) throw new Error(`fetch asset ${url}: ${res.status}`)
   const len = Number(res.headers.get('content-length') ?? 0)
-  if (len > MAX_BYTES) throw new Error(`asset ${url} content-length ${len} exceeds ${MAX_BYTES}`)
-  const text = await res.text()
-  return { content: text, bytes: new TextEncoder().encode(text).length }
+  if (len > MAX_BYTES) {
+    await res.body?.cancel()
+    throw new Error('Manifest asset exceeds 64 KiB cap')
+  }
+  const reader = res.body?.getReader()
+  if (!reader) return { content: '', bytes: 0 }
+  const chunks: Uint8Array[] = []
+  let bytes = 0
+  try {
+    for (;;) {
+      const part = await reader.read()
+      if (part.done) break
+      bytes += part.value.byteLength
+      if (bytes > MAX_BYTES) {
+        await reader.cancel()
+        throw new Error('Manifest asset exceeds 64 KiB cap')
+      }
+      chunks.push(part.value)
+    }
+    return { content: Buffer.concat(chunks).toString('utf8'), bytes }
+  } finally {
+    reader.releaseLock()
+  }
 }
 
 // Resolves the README a manifest points at: the localized `readmes` map first,
@@ -346,6 +369,7 @@ export async function resolveManifestFromReleaseAssets(
   accessToken: string,
   assets: ReleaseAsset[],
   readmeAt?: { ref: RepoRef; tag: string },
+  options: { strict?: boolean } = {},
 ): Promise<ResolvedManifest | null> {
   if (assets.length === 0) return null
   const byName = new Map(assets.map((a) => [a.name, a]))
@@ -358,9 +382,19 @@ export async function resolveManifestFromReleaseAssets(
       (candidate.path.startsWith('.') ? byName.get(`default${candidate.path}`) : undefined)
     if (!asset) continue
     try {
-      const got = await fetchAssetContent(asset.url, accessToken)
-      if (!got) continue
+      const got = await fetchAssetContent(asset.url)
+      if (!got) {
+        if (options.strict)
+          throw new ManifestValidationError([
+            { path: '/', code: 'asset', message: 'Published manifest asset is unavailable.' },
+          ])
+        continue
+      }
       if (got.bytes > MAX_BYTES) {
+        if (options.strict)
+          throw new ManifestValidationError([
+            { path: '/', code: 'size', message: 'Published manifest exceeds 64 KiB cap.' },
+          ])
         log.warn({ path: candidate.path, bytes: got.bytes }, 'asset manifest exceeds size cap — ignored')
         continue
       }
@@ -373,6 +407,12 @@ export async function resolveManifestFromReleaseAssets(
       return { raw: got.content, parsed, readmeMarkdown, readmeLocales }
     } catch (err) {
       if (err instanceof UpstreamUnauthorizedError) throw err
+      if (options.strict) {
+        if (err instanceof ManifestValidationError) throw err
+        throw new ManifestValidationError([
+          { path: '/', code: 'asset', message: 'Published manifest asset could not be loaded.' },
+        ])
+      }
       if (err instanceof ManifestValidationError) {
         log.warn({ path: candidate.path, errors: err.errors }, 'asset manifest invalid — trying next candidate')
       } else {
@@ -381,6 +421,30 @@ export async function resolveManifestFromReleaseAssets(
     }
   }
   return null
+}
+
+/** Immutable release assets determine identity before source-only authoring files. */
+export async function resolveSubmissionManifest(
+  accessToken: string,
+  ref: RepoRef,
+  release: { tag: string; assets: ReleaseAsset[] },
+): Promise<ResolvedManifest | null> {
+  const manifest =
+    (await resolveManifestFromReleaseAssets(
+      accessToken,
+      release.assets,
+      { ref, tag: release.tag },
+      { strict: true },
+    )) ?? (await resolveManifest(accessToken, ref, { ref: release.tag }))
+  if (manifest) {
+    try {
+      assertManifestVersionMatches(manifest.parsed, release.tag)
+    } catch (error) {
+      if (!(error instanceof ManifestVersionMismatchError)) throw error
+      throw new ManifestValidationError([{ path: '/version', code: 'version', message: error.message }])
+    }
+  }
+  return manifest
 }
 
 export async function resolveManifest(

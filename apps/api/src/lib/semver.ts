@@ -1,6 +1,22 @@
 import semver from 'semver'
 import { SEMVER_VERSION_PATTERN } from '@tabularium/manifest'
 
+export class ManifestVersionMismatchError extends Error {
+  readonly declared: string
+  readonly expected: string
+  constructor(declared: string, expected: string) {
+    super(`manifest version "${declared}" does not match release tag v${expected}`)
+    this.name = 'ManifestVersionMismatchError'
+    this.declared = declared
+    this.expected = expected
+  }
+}
+
+export function assertManifestVersionMatches(parsed: { version: string }, expectedVersion: string): void {
+  const expected = expectedVersion.replace(/^v/, '')
+  if (parsed.version !== expected) throw new ManifestVersionMismatchError(parsed.version, expected)
+}
+
 // Same shape as the manifest schema's `version` regex. `semver.valid()`
 // accepts a leading "v" and normalises it away, which is too lax for tag
 // ingestion — we want X.Y.Z exactly.

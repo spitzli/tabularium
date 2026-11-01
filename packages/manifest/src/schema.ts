@@ -1,5 +1,6 @@
 import type { TSchema } from '@sinclair/typebox'
 import type { KindManifestSchema } from './root-schema'
+import { factorSchema } from './factor-schema'
 
 export type JsonSchemaProperty = Record<string, unknown>
 export type ExtensionsDelta = Record<string, JsonSchemaProperty>
@@ -88,25 +89,29 @@ export function buildSchema(input: BuildSchemaInput): Record<string, unknown> {
     }
     const selected = input.kind ? rootSchemas[input.kind] : undefined
     if (selected)
-      return stripXTranslations({
-        $schema: 'https://json-schema.org/draft/2020-12/schema',
-        $id: `${schemaUrl}?kind=${encodeURIComponent(input.kind!)}`,
-        title: `Tabularium plugin manifest — ${input.kind}`,
-        allOf: [lockedCore, selected],
-      }) as Record<string, unknown>
+      return factorSchema(
+        stripXTranslations({
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          $id: `${schemaUrl}?kind=${encodeURIComponent(input.kind!)}`,
+          title: `Tabularium plugin manifest — ${input.kind}`,
+          allOf: [lockedCore, selected],
+        }) as Record<string, unknown>,
+      )
     if (!input.kind) {
       const legacy = buildSchema({ ...input, kindSchemas: undefined })
       delete legacy.$schema
       delete legacy.$id
-      return stripXTranslations({
-        $schema: 'https://json-schema.org/draft/2020-12/schema',
-        $id: schemaUrl,
-        title: 'Tabularium plugin manifest',
-        oneOf: [
-          { ...legacy, not: { properties: { kind: { enum: rootKeys } }, required: ['kind'] } },
-          ...rootKeys.map((key) => ({ allOf: [lockedCore, rootSchemas[key]] })),
-        ],
-      }) as Record<string, unknown>
+      return factorSchema(
+        stripXTranslations({
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          $id: schemaUrl,
+          title: 'Tabularium plugin manifest',
+          oneOf: [
+            { ...legacy, not: { properties: { kind: { enum: rootKeys } }, required: ['kind'] } },
+            ...rootKeys.map((key) => ({ allOf: [lockedCore, rootSchemas[key]] })),
+          ],
+        }) as Record<string, unknown>,
+      )
     }
   }
 

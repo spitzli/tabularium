@@ -5,7 +5,7 @@ import { db } from '$db'
 import { deriveSlug } from '$lib/slug'
 import { parseRepoUrl, checkOwnership } from '$lib/providers'
 import { getValidAccessToken, OAuthExpiredError, UpstreamUnauthorizedError } from '$lib/oauth-tokens'
-import { resolveManifest, ManifestValidationError } from '$lib/manifest'
+import { resolveSubmissionManifest, ManifestValidationError } from '$lib/manifest'
 import { getManifestConfig } from '$lib/manifest-config'
 import { fetchLatestRelease } from '$lib/release-fetch'
 import { getFeatures } from '$lib/features'
@@ -104,7 +104,8 @@ export default new Elysia()
           return { ok: false as const, error: 'OAuth token expired', reauthFor: err.providerInstanceId }
         }
         log.warn({ err, slug }, 'latest-release lookup failed during preview')
-        latestRelease = null
+        set.status = 503
+        return { ok: false as const, error: 'Published releases could not be inspected. Retry before submitting.' }
       }
 
       if (!latestRelease) {
@@ -123,7 +124,7 @@ export default new Elysia()
 
       try {
         const tag = latestRelease.tag
-        const manifest = await resolveManifest(accessToken, ref, { ref: tag })
+        const manifest = await resolveSubmissionManifest(accessToken, ref, latestRelease)
         if (!manifest) {
           return {
             ok: true as const,
@@ -178,17 +179,11 @@ export default new Elysia()
           return { ok: false as const, error: 'OAuth token expired', reauthFor: err.providerInstanceId }
         }
         if (err instanceof ManifestValidationError) {
+          set.status = 422
           return {
-            ok: true as const,
-            slug,
-            slugTaken: existing !== null && existing !== undefined,
-            repoUrl: body.repoUrl,
-            providerInstanceId: ref.instance.id,
-            providerKind: ref.instance.kind,
-            fromManifest: false as const,
-            suggestedName: humanize(ref.repo),
+            ok: false as const,
+            error: err.message,
             validationErrors: err.errors,
-            message: 'Manifest is present but failed validation — see the errors below.',
           }
         }
         log.warn({ err, slug }, 'preview failed')
@@ -238,7 +233,9 @@ export default new Elysia()
         401: t.Object({ ok: t.Literal(false), error: t.String(), reauthFor: t.String() }),
         403: t.Object({ ok: t.Literal(false), error: t.String() }),
         412: t.Object({ ok: t.Literal(false), error: t.String() }),
+        422: t.Object({ ok: t.Literal(false), error: t.String(), validationErrors: t.Array(t.Any()) }),
         500: t.Object({ ok: t.Literal(false), error: t.String() }),
+        503: t.Object({ ok: t.Literal(false), error: t.String() }),
       },
     },
   )

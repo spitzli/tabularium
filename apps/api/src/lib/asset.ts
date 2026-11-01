@@ -48,7 +48,7 @@ export function serializeAssets(map: AssetMap): string {
 const MAX_REDIRECTS = 3
 const FETCH_TIMEOUT_MS = 30_000
 
-async function fetchWithGuards(initialUrl: string): Promise<Response> {
+export async function fetchWithGuards(initialUrl: string): Promise<Response> {
   let url = initialUrl
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     if (!isPublicHttpUrl(url)) throw new Error(`blocked URL: ${url}`)

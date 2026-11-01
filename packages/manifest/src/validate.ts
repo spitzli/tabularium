@@ -8,6 +8,7 @@ function makeAjv(options: { removeAdditional?: true } = {}) {
     allErrors: true,
     strict: false,
     verbose: true, // so err.data lands in our ValidationError.actual via mapAjvErrors
+    inlineRefs: false, // Generated local definitions compile once instead of expanding at every use.
     removeAdditional: options.removeAdditional,
   })
   addFormats(ajv)
