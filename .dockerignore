@@ -20,7 +20,12 @@ apps/api/.cache
 *.tar.gz
 Dockerfile
 .dockerignore
-deploy
+# API type tests import this public contract fixture. Other deployment files
+# remain outside the context and no deployment files enter the runtime image.
+deploy/*
+!deploy/tabularis
+deploy/tabularis/*
+!deploy/tabularis/connection-fields.json
 docs
 docs/superpowers
 TODO.md
