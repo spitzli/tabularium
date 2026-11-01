@@ -185,4 +185,5 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=20s \
   CMD wget -qO- http://127.0.0.1:3000/healthz || exit 1
 
 ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["bun", "src/index.ts"]
+# Keep JavaScriptCore collection responsive to the registry's 512 MiB budget.
+CMD ["bun", "--smol", "src/index.ts"]

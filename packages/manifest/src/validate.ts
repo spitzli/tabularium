@@ -25,11 +25,16 @@ function compiled(schema: Record<string, unknown>, lenient: boolean): ValidateFu
   const key = `${lenient}:` + JSON.stringify(schema)
   const cached = validators.get(key)
   if (cached) return cached
+  // A full kind union produces a large compiled function. Release the previous
+  // heavyweight validator before compiling another under a 512 MiB runtime.
+  if (key.length > 64 * 1024) {
+    for (const existing of validators.keys()) if (existing.length > 64 * 1024) validators.delete(existing)
+  }
+  if (validators.size >= 4) validators.delete(validators.keys().next().value!)
   const validate = makeAjv(lenient ? { removeAdditional: true } : {}).compile(schema)
   // Complete per-kind unions are expensive to compile. Bound both entry count
   // and retained key size; content keys also prevent stale object-mutation hits.
   if (key.length <= 1024 * 1024) {
-    if (validators.size >= 4) validators.delete(validators.keys().next().value!)
     validators.set(key, validate)
   }
   return validate
