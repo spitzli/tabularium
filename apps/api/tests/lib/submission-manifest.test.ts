@@ -6,6 +6,7 @@ import {
   resolveManifestFromReleaseAssets,
 } from '../../src/lib/manifest'
 import { parseRepoUrl } from '../../src/lib/providers'
+import { setSetting } from '../../src/lib/settings'
 
 // Bun adds fetch.preconnect; these mocks replace only the callable handler.
 const mockFetch = (handler: (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>) =>
@@ -15,7 +16,10 @@ const raw = JSON.stringify({ name: 'echo-demo', version: '0.1.0', description: '
 const asset = { name: 'tabularium.json', url: 'https://example.com/echo-release.json' }
 
 describe('submission manifest release identity', () => {
-  beforeEach(clearDb)
+  beforeEach(async () => {
+    await clearDb()
+    await setSetting('manifest.allowed_files', JSON.stringify(['.tabularium', 'tabularium.json']))
+  })
 
   it('prefers immutable assets over a repository name and source authoring manifest', async () => {
     const ref = parseRepoUrl('https://github.com/alice/cloud-plugin-echo-demo')!

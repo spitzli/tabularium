@@ -3,6 +3,7 @@ import { buildApp, clearDb, makeUser } from '../helpers'
 import { signJwt } from '../../src/lib/jwt'
 import { db } from '../../src/db'
 import * as ingest from '../../src/lib/release-ingest'
+import { setSetting } from '../../src/lib/settings'
 
 // Bun adds fetch.preconnect; these mocks replace only the callable handler.
 const mockFetch = (handler: (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>) =>
@@ -14,7 +15,10 @@ const manifest = JSON.stringify({ name: 'echo-demo', version: '0.1.0', descripti
 
 for (const route of ['preview', 'oauth'])
   describe(`POST submit/${route} release assets`, () => {
-    beforeEach(clearDb)
+    beforeEach(async () => {
+      await clearDb()
+      await setSetting('manifest.allowed_files', JSON.stringify(['.tabularium', 'tabularium.json']))
+    })
 
     async function request(mode: 'valid' | 'invalid' | 'unavailable' | 'mismatch') {
       const user = await makeUser({ username: 'alice' })
