@@ -32,6 +32,7 @@ const kindBodySchema = t.Object({
   labelTranslations: translationMapSchema,
   description: t.Optional(t.Nullable(t.String({ maxLength: 280 }))),
   descriptionTranslations: translationMapSchema,
+  manifestSchema: t.Optional(t.Nullable(t.Record(t.String(), t.Any()))),
   publicPageEnabled: t.Optional(t.Boolean()),
   publicPageCopy: t.Optional(t.Nullable(publicPageCopySchema)),
   prosePre: t.Optional(t.Nullable(t.String())),
@@ -48,6 +49,7 @@ const kindSchema = t.Object({
   description: t.Nullable(t.String()),
   descriptionTranslations: translationMapSchema,
   extensionsSchema: t.Optional(t.Nullable(t.Record(t.String(), t.Any()))),
+  manifestSchema: t.Optional(t.Nullable(t.Record(t.String(), t.Any()))),
   publicPageEnabled: t.Optional(t.Boolean()),
   publicPageCopy: t.Optional(t.Nullable(publicPageCopySchema)),
   prosePre: t.Optional(t.Nullable(t.String())),
@@ -80,6 +82,7 @@ export default new Elysia()
           ...(body.descriptionTranslations !== undefined
             ? { descriptionTranslations: body.descriptionTranslations }
             : {}),
+          ...(body.manifestSchema !== undefined ? { manifestSchema: body.manifestSchema } : {}),
           ...(body.publicPageEnabled !== undefined ? { publicPageEnabled: body.publicPageEnabled } : {}),
           ...(body.publicPageCopy !== undefined ? { publicPageCopy: body.publicPageCopy } : {}),
           ...(body.prosePre !== undefined ? { prosePre: body.prosePre } : {}),

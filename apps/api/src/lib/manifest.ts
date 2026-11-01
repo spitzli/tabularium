@@ -12,7 +12,7 @@ import {
   ParseError,
 } from '@tabularium/manifest'
 import { buildMergedSchema } from './manifest-schema'
-import { getKinds } from './kinds'
+import { getKinds, getKind } from './kinds'
 import { getSetting } from './settings'
 import type { ValidationError } from '@tabularium/manifest'
 
@@ -49,6 +49,8 @@ export function assertManifestIdentity(parsed: Manifest, slug: string): void {
 }
 
 export function parseManifestText(text: string, expectedId?: string): Manifest {
+  if (Buffer.byteLength(text, 'utf8') > MAX_BYTES)
+    throw new ManifestValidationError([{ path: '/', code: 'size', message: 'manifest exceeds 64 KiB cap' }])
   let parsed: Record<string, unknown>
   try {
     parsed = parseManifest(text)
@@ -60,7 +62,7 @@ export function parseManifestText(text: string, expectedId?: string): Manifest {
   }
   const declaredKind = typeof parsed.kind === 'string' ? parsed.kind : null
   const schema = buildMergedSchema({ kind: declaredKind })
-  const result = validateManifest(parsed, schema, { lenient: true })
+  const result = validateManifest(parsed, schema, { lenient: !(declaredKind && getKind(declaredKind)?.manifestSchema) })
   if (!result.ok) {
     throw new ManifestValidationError(result.errors)
   }

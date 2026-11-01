@@ -29,6 +29,24 @@ COPY . .
 RUN cd packages/manifest && bun run build
 RUN cd apps/frontend && bun run build
 
+# Explicit EU qualification target; production source and the frozen dependency
+# install/frontend build above are shared with the runtime image build.
+FROM build AS qualification
+ARG REVISION=unknown
+ENV LOG_LEVEL=error
+RUN bun test packages/manifest/test
+RUN cd apps/api && bun run check
+RUN cd apps/api && bun test \
+    tests/lib/kind-manifest-schema.test.ts tests/lib/kinds.test.ts \
+    tests/lib/manifest-parse.test.ts tests/lib/manifest-schema.test.ts \
+    tests/lib/manifest-require-kind.test.ts tests/lib/extensions-schema.test.ts \
+    tests/routes/kinds.test.ts tests/routes/manifest-validate.test.ts \
+    tests/routes/manifest-schema-json.test.ts
+RUN bun -e 'await Bun.write("/qualification.json", JSON.stringify({revision:process.env.REVISION,bun:Bun.version,frozenInstall:true,manifestTests:true,apiTypecheck:true,apiAdmissionRouteTests:true,productionFrontendBuild:true},null,2)+"\n")'
+
+FROM scratch AS qualification-evidence
+COPY --from=qualification /qualification.json /qualification.json
+
 FROM docker.io/oven/bun:1.3-alpine@sha256:5acc90a93e91ff07bf72aa90a7c9f0fa189765aec90b47bdbf2152d2196383c0 AS prod-deps
 
 WORKDIR /repo

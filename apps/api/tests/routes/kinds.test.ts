@@ -32,6 +32,48 @@ async function adminToken() {
   return signJwt({ sub: u.id, identityId: u.identityId, username: u.username, providerInstanceId: 'github' })
 }
 
+describe('kind root manifest admission API', () => {
+  beforeEach(clearDb)
+  it('persists and returns an explicit root policy and applies it to authoring', async () => {
+    const token = await adminToken()
+    const app = await buildApp()
+    const manifestSchema = {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        name: { type: 'string' },
+        version: { type: 'string' },
+        kind: { const: 'provider' },
+        catalogOnly: { const: true },
+      },
+      required: ['name', 'version', 'kind', 'catalogOnly'],
+    }
+    const headers = { Authorization: `Bearer ${token}`, 'content-type': 'application/json' }
+    const created = await app.handle(
+      new Request('http://localhost/api/admin/kinds', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ key: 'provider', label: 'Providers', manifestSchema }),
+      }),
+    )
+    expect(created.status).toBe(201)
+    expect((await created.json()).kind.manifestSchema).toEqual(manifestSchema)
+    const fetched = await app.handle(new Request('http://localhost/api/admin/kinds/provider', { headers }))
+    expect((await fetched.json()).kind.manifestSchema).toEqual(manifestSchema)
+    const authoring = await app.handle(
+      new Request('http://localhost/api/manifest/validate', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          kind: 'provider',
+          text: JSON.stringify({ name: 'demo', version: '1.0.0', kind: 'provider', catalogOnly: false }),
+        }),
+      }),
+    )
+    expect((await authoring.json()).ok).toBe(false)
+  })
+})
+
 describe('GET /api/admin/kinds', () => {
   beforeEach(clearDb)
 

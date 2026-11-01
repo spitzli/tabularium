@@ -123,9 +123,9 @@ describe('reads', () => {
     expect(getKinds()).toEqual([])
   })
 
-  it('getKinds returns [] when setting is malformed JSON', async () => {
+  it('getKinds fails closed when a persisted setting is malformed JSON', async () => {
     await setSetting('plugin_kinds', 'not json')
-    expect(getKinds()).toEqual([])
+    expect(() => getKinds()).toThrow(KindError)
   })
 
   it('getKind returns the matching def or null', async () => {

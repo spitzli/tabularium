@@ -1,4 +1,5 @@
 import type { TSchema } from '@sinclair/typebox'
+import type { KindManifestSchema } from './root-schema'
 
 export type JsonSchemaProperty = Record<string, unknown>
 export type ExtensionsDelta = Record<string, JsonSchemaProperty>
@@ -7,6 +8,7 @@ export type BuildSchemaInput = {
   coreSchema: TSchema
   extensions?: ExtensionsDelta
   kindOverrides?: Record<string, ExtensionsDelta>
+  kindSchemas?: Record<string, KindManifestSchema>
   kind?: string | null
   schemaUrl?: string
 }
@@ -75,6 +77,38 @@ export function buildSchema(input: BuildSchemaInput): Record<string, unknown> {
     Object.entries(input.kindOverrides ?? {}).map(([kind, props]) => [kind, withoutCore(props)]),
   )
   const coreAllOf = (input.coreSchema.allOf ?? []) as Record<string, unknown>[]
+  const rootSchemas = input.kindSchemas ?? {}
+  const rootKeys = Object.keys(rootSchemas)
+  if (rootKeys.length > 0) {
+    const lockedCore = {
+      type: 'object',
+      properties: coreProps,
+      required: coreRequired,
+      ...(coreAllOf.length > 0 ? { allOf: coreAllOf } : {}),
+    }
+    const selected = input.kind ? rootSchemas[input.kind] : undefined
+    if (selected)
+      return stripXTranslations({
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        $id: `${schemaUrl}?kind=${encodeURIComponent(input.kind!)}`,
+        title: `Tabularium plugin manifest — ${input.kind}`,
+        allOf: [lockedCore, selected],
+      }) as Record<string, unknown>
+    if (!input.kind) {
+      const legacy = buildSchema({ ...input, kindSchemas: undefined })
+      delete legacy.$schema
+      delete legacy.$id
+      return stripXTranslations({
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        $id: schemaUrl,
+        title: 'Tabularium plugin manifest',
+        oneOf: [
+          { ...legacy, not: { properties: { kind: { enum: rootKeys } }, required: ['kind'] } },
+          ...rootKeys.map((key) => ({ allOf: [lockedCore, rootSchemas[key]] })),
+        ],
+      }) as Record<string, unknown>
+    }
+  }
 
   if (input.kind) {
     const ext = kindOverrides[input.kind] ?? globalExt

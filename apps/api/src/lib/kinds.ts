@@ -1,6 +1,7 @@
 import { parse as yamlParse } from 'yaml'
 import { getSetting, setSetting } from './settings'
 import { validateExtensionsDelta, type ExtensionsDelta } from './extensions-schema'
+import { validateKindManifestSchema, type KindManifestSchema } from '@tabularium/manifest'
 import { SUPPORTED_LOCALES, getI18nConfig, type Locale } from './i18n'
 
 type LocalizedString = Partial<Record<Locale, string>>
@@ -19,6 +20,7 @@ export type KindDef = {
   description: string | null
   descriptionTranslations?: LocalizedString
   extensionsSchema?: ExtensionsDelta | null
+  manifestSchema?: KindManifestSchema | null
   /**
    * When true the registry serves a dedicated catalogue page at /c/:key
    * pre-filtered to plugins of this kind. Defaults to false.
@@ -170,6 +172,14 @@ export function validateKindDef(input: unknown): KindDef {
   }
 
   const publicPageEnabled = o.publicPageEnabled === true
+  let manifestSchema: KindManifestSchema | null | undefined
+  if (o.manifestSchema !== undefined) {
+    try {
+      manifestSchema = o.manifestSchema === null ? null : validateKindManifestSchema(o.manifestSchema, key)
+    } catch (err) {
+      throw new KindError('invalid', err instanceof Error ? err.message : 'invalid manifestSchema')
+    }
+  }
 
   let publicPageCopy: KindPublicPageCopy | null | undefined
   if (o.publicPageCopy !== undefined) {
@@ -216,6 +226,7 @@ export function validateKindDef(input: unknown): KindDef {
     description,
     ...(descriptionTranslations ? { descriptionTranslations } : {}),
     ...(extensionsSchema !== undefined ? { extensionsSchema } : {}),
+    ...(manifestSchema !== undefined ? { manifestSchema } : {}),
     ...(publicPageEnabled ? { publicPageEnabled } : {}),
     ...(publicPageCopy !== undefined ? { publicPageCopy } : {}),
     ...(prosePre !== null ? { prosePre } : {}),
@@ -241,21 +252,15 @@ function trimOrNull(value: unknown, max: number, field: string): string | null {
 
 export function getKinds(): KindDef[] {
   const raw = getSetting(SETTINGS_KEY)
-  if (!raw) return []
+  if (raw === undefined) return []
   try {
-    const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    return parsed
-      .map((item) => {
-        try {
-          return validateKindDef(item)
-        } catch {
-          return null
-        }
-      })
-      .filter((x): x is KindDef => x !== null)
-  } catch {
-    return []
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) throw new KindError('invalid', 'Stored plugin kinds must be an array')
+    if (parsed.length > MAX_ENTRIES) throw new KindError('invalid', 'Stored plugin kinds exceed the entry limit')
+    return parsed.map(validateKindDef)
+  } catch (error) {
+    if (error instanceof KindError) throw error
+    throw new KindError('invalid', 'Stored plugin kinds are invalid')
   }
 }
 
@@ -293,6 +298,9 @@ export async function updateKind(key: string, def: KindDef): Promise<KindDef> {
   const idx = current.findIndex((k) => k.key === key)
   if (idx === -1) throw new KindError('not_found', `kind "${key}" not found`)
   const next = current.slice()
+  if (def.manifestSchema === undefined && current[idx].manifestSchema !== undefined) {
+    v.manifestSchema = current[idx].manifestSchema
+  }
   next[idx] = v
   await writeKinds(next)
   return v

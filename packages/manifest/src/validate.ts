@@ -1,4 +1,5 @@
 import Ajv2020 from 'ajv/dist/2020'
+import type { ValidateFunction } from 'ajv'
 import addFormats from 'ajv-formats'
 import { mapAjvErrors, type ValidationError } from './errors'
 
@@ -18,6 +19,21 @@ export type ValidateResult =
   | { ok: false; normalized: null; errors: ValidationError[] }
 
 export type ValidateOptions = { lenient?: boolean }
+const validators = new Map<string, ValidateFunction>()
+
+function compiled(schema: Record<string, unknown>, lenient: boolean): ValidateFunction {
+  const key = `${lenient}:` + JSON.stringify(schema)
+  const cached = validators.get(key)
+  if (cached) return cached
+  const validate = makeAjv(lenient ? { removeAdditional: true } : {}).compile(schema)
+  // Complete per-kind unions are expensive to compile. Bound both entry count
+  // and retained key size; content keys also prevent stale object-mutation hits.
+  if (key.length <= 1024 * 1024) {
+    if (validators.size >= 4) validators.delete(validators.keys().next().value!)
+    validators.set(key, validate)
+  }
+  return validate
+}
 
 export function validateManifest(
   parsed: unknown,
@@ -29,8 +45,7 @@ export function validateManifest(
   // In strict mode: additionalProperties violations surface as errors.
   // Only strip where additionalProperties:false is declared. 'all' would
   // erase id/version in the conditional legacy-name constraint.
-  const ajv = makeAjv(lenient ? { removeAdditional: true } : {})
-  const validate = ajv.compile(schema)
+  const validate = compiled(schema, lenient)
   // Clone so ajv's data mutations (removeAdditional) don't leak to the caller.
   const dataCopy = structuredClone(parsed)
   const ok = validate(dataCopy)

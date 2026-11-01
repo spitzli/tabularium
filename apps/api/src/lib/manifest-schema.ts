@@ -54,6 +54,11 @@ export function buildMergedSchema(options: { kind?: string | null } = {}): Recor
     coreSchema: ManifestSchema as unknown as TSchema,
     extensions: getExtensionsDelta(),
     kindOverrides: loadKindOverrides(),
+    kindSchemas: Object.fromEntries(
+      getKinds()
+        .filter((k) => k.manifestSchema)
+        .map((k) => [k.key, k.manifestSchema!]),
+    ),
     kind: options.kind ?? null,
     schemaUrl: cfg.schemaUrl,
   })
