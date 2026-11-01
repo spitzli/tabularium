@@ -4,6 +4,10 @@ import { signJwt } from '../../src/lib/jwt'
 import { db } from '../../src/db'
 import * as ingest from '../../src/lib/release-ingest'
 
+// Bun adds fetch.preconnect; these mocks replace only the callable handler.
+const mockFetch = (handler: (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>) =>
+  spyOn(global, 'fetch').mockImplementation(handler as unknown as typeof fetch)
+
 const repository = 'https://github.com/alice/cloud-plugin-echo-demo'
 const assetUrl = 'https://example.com/echo-release.json'
 const manifest = JSON.stringify({ name: 'echo-demo', version: '0.1.0', description: 'Release fixture' })
@@ -21,7 +25,7 @@ for (const route of ['preview', 'oauth'])
         providerInstanceId: 'github',
       })
       const hash = spyOn(ingest, 'hashReleaseAssetsAsync').mockResolvedValue(undefined)
-      const mock = spyOn(global, 'fetch').mockImplementation(async (input, init) => {
+      const mock = mockFetch(async (input, init) => {
         const url = String(input)
         if (url === assetUrl)
           return new Response(

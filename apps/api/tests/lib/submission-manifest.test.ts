@@ -7,6 +7,10 @@ import {
 } from '../../src/lib/manifest'
 import { parseRepoUrl } from '../../src/lib/providers'
 
+// Bun adds fetch.preconnect; these mocks replace only the callable handler.
+const mockFetch = (handler: (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>) =>
+  spyOn(global, 'fetch').mockImplementation(handler as unknown as typeof fetch)
+
 const raw = JSON.stringify({ name: 'echo-demo', version: '0.1.0', description: 'Immutable release fixture' })
 const asset = { name: 'tabularium.json', url: 'https://example.com/echo-release.json' }
 
@@ -16,7 +20,7 @@ describe('submission manifest release identity', () => {
   it('prefers immutable assets over a repository name and source authoring manifest', async () => {
     const ref = parseRepoUrl('https://github.com/alice/cloud-plugin-echo-demo')!
     const source: string[] = []
-    const mock = spyOn(global, 'fetch').mockImplementation(async (input) => {
+    const mock = mockFetch(async (input) => {
       const url = String(input)
       if (url === asset.url) return new Response(raw)
       if (url.includes('/contents/.tabularium')) source.push(url)
@@ -35,7 +39,7 @@ describe('submission manifest release identity', () => {
   it('never sends forge OAuth to a foreign asset or a CDN redirect', async () => {
     const initial = 'https://github.com/alice/demo/releases/download/v0.1.0/tabularium.json'
     const requests: string[] = []
-    const mock = spyOn(global, 'fetch').mockImplementation(async (input, init) => {
+    const mock = mockFetch(async (input, init) => {
       const url = String(input)
       requests.push(url)
       expect(new Headers(init?.headers).get('authorization')).toBeNull()
@@ -79,7 +83,7 @@ describe('submission manifest release identity', () => {
   it('does not hide an invalid published asset behind a valid source file', async () => {
     const ref = parseRepoUrl('https://github.com/alice/cloud-plugin-echo-demo')!
     let sourceRequests = 0
-    const mock = spyOn(global, 'fetch').mockImplementation(async (input) => {
+    const mock = mockFetch(async (input) => {
       if (String(input) === asset.url) return new Response('{')
       sourceRequests++
       return new Response(raw)
@@ -108,7 +112,7 @@ describe('submission manifest release identity', () => {
 
   it('keeps source-only releases working when no manifest asset is declared', async () => {
     const ref = parseRepoUrl('https://github.com/alice/source-only')!
-    const mock = spyOn(global, 'fetch').mockImplementation(async (input) =>
+    const mock = mockFetch(async (input) =>
       String(input).includes('/contents/.tabularium') ? new Response(raw) : new Response('not found', { status: 404 }),
     )
     try {
@@ -121,7 +125,7 @@ describe('submission manifest release identity', () => {
 
   it('rejects a valid asset whose version differs from the release tag', async () => {
     const ref = parseRepoUrl('https://github.com/alice/cloud-plugin-echo-demo')!
-    const mock = spyOn(global, 'fetch').mockImplementation(async (input) =>
+    const mock = mockFetch(async (input) =>
       String(input) === asset.url ? new Response(raw) : new Response('missing', { status: 404 }),
     )
     try {
