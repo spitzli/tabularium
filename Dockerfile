@@ -42,6 +42,7 @@ RUN cd apps/api && bun test \
     tests/lib/manifest-require-kind.test.ts tests/lib/extensions-schema.test.ts \
     tests/lib/asset-manifest.test.ts tests/lib/resolve-manifest.test.ts tests/lib/submission-manifest.test.ts \
     tests/lib/url-public.test.ts \
+    tests/lib/manifest-body-limit.test.ts \
     tests/routes/submit.test.ts tests/routes/submit-release-assets.test.ts \
     tests/routes/kinds.test.ts tests/routes/manifest-validate.test.ts \
     tests/routes/manifest-schema-json.test.ts

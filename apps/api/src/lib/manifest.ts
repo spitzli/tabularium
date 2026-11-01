@@ -36,6 +36,37 @@ export class ManifestValidationError extends Error {
   }
 }
 
+async function readBoundedDocument(res: Response, limit: number): Promise<{ content: string; bytes: number }> {
+  const len = Number(res.headers.get('content-length') ?? 0)
+  if (len > limit) {
+    await res.body?.cancel()
+    throw new ManifestValidationError([{ path: '/', code: 'size', message: `Document exceeds ${limit}-byte cap` }])
+  }
+  const reader = res.body?.getReader()
+  if (!reader) return { content: '', bytes: 0 }
+  const chunks: Uint8Array[] = []
+  let bytes = 0
+  try {
+    for (;;) {
+      const part = await reader.read()
+      if (part.done) break
+      bytes += part.value.byteLength
+      if (bytes > limit) {
+        await reader.cancel()
+        throw new ManifestValidationError([{ path: '/', code: 'size', message: `Document exceeds ${limit}-byte cap` }])
+      }
+      chunks.push(part.value)
+    }
+    return { content: Buffer.concat(chunks).toString('utf8'), bytes }
+  } finally {
+    reader.releaseLock()
+  }
+}
+
+function sourceDocumentLimit(path: string): number {
+  return manifestCandidates().some((candidate) => candidate.path === path) ? MAX_BYTES : MAX_README_BYTES
+}
+
 export function assertManifestIdentity(parsed: Manifest, slug: string): void {
   // Older releases used name for display updates after the slug was pinned.
   // Preserve those releases; an explicit id must always match the pinned slug.
@@ -119,14 +150,11 @@ function makeGithubFlavoredFetcher(
     }
     if (userAgent) headers['User-Agent'] = userAgent
     const url = `${apiBase}/repos/${ref.owner}/${ref.repo}/contents/${encodeURIComponent(path)}${branch ? `?ref=${encodeURIComponent(branch)}` : ''}`
-    const res = await fetch(url, { headers })
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(30_000) })
     if (res.status === 404) return null
     if (res.status === 401) throw new UpstreamUnauthorizedError(ref.instance.id, `contents/${path}`)
     if (!res.ok) throw new Error(`Fetch ${path}: ${res.status}`)
-    const len = Number(res.headers.get('content-length') ?? 0)
-    if (len > MAX_README_BYTES) throw new Error(`${path} exceeds size cap`)
-    const text = await res.text()
-    return { content: text, bytes: new TextEncoder().encode(text).length }
+    return readBoundedDocument(res, sourceDocumentLimit(path))
   }
 }
 
@@ -134,14 +162,11 @@ function makeGiteaFetcher(apiBase: string, accessToken: string, ref: RepoRef, br
   return async (path) => {
     const headers: Record<string, string> = { Authorization: `Bearer ${accessToken}` }
     const url = `${apiBase}/repos/${ref.owner}/${ref.repo}/raw/${path.split('/').map(encodeURIComponent).join('/')}${branch ? `?ref=${encodeURIComponent(branch)}` : ''}`
-    const res = await fetch(url, { headers })
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(30_000) })
     if (res.status === 404) return null
     if (res.status === 401) throw new UpstreamUnauthorizedError(ref.instance.id, `raw/${path}`)
     if (!res.ok) throw new Error(`Fetch ${path}: ${res.status}`)
-    const len = Number(res.headers.get('content-length') ?? 0)
-    if (len > MAX_README_BYTES) throw new Error(`${path} exceeds size cap`)
-    const text = await res.text()
-    return { content: text, bytes: new TextEncoder().encode(text).length }
+    return readBoundedDocument(res, sourceDocumentLimit(path))
   }
 }
 
@@ -154,12 +179,14 @@ function makeGitlabFetcher(
   return async (path) => {
     const projectId = encodeURIComponent(ref.fullName)
     const url = `${baseUrl}/api/v4/projects/${projectId}/repository/files/${encodeURIComponent(path)}/raw?ref=${encodeURIComponent(branch ?? 'HEAD')}`
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(30_000),
+    })
     if (res.status === 404) return null
     if (res.status === 401) throw new UpstreamUnauthorizedError(ref.instance.id, `files/${path}`)
     if (!res.ok) throw new Error(`Fetch ${path}: ${res.status}`)
-    const text = await res.text()
-    return { content: text, bytes: new TextEncoder().encode(text).length }
+    return readBoundedDocument(res, sourceDocumentLimit(path))
   }
 }
 
@@ -231,7 +258,7 @@ export async function fetchReleaseAssetList(
     }
   }
   try {
-    const res = await fetch(url, { headers })
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(30_000) })
     if (res.status === 404) return null
     if (!res.ok) {
       log.warn({ url, status: res.status }, 'release asset list fetch failed')
@@ -253,30 +280,7 @@ async function fetchAssetContent(url: string): Promise<{ content: string; bytes:
     if (res.status === 404) return null
     throw new Error(`Asset fetch failed: ${res.status}`)
   }
-  const len = Number(res.headers.get('content-length') ?? 0)
-  if (len > MAX_BYTES) {
-    await res.body?.cancel()
-    throw new Error('Manifest asset exceeds 64 KiB cap')
-  }
-  const reader = res.body?.getReader()
-  if (!reader) return { content: '', bytes: 0 }
-  const chunks: Uint8Array[] = []
-  let bytes = 0
-  try {
-    for (;;) {
-      const part = await reader.read()
-      if (part.done) break
-      bytes += part.value.byteLength
-      if (bytes > MAX_BYTES) {
-        await reader.cancel()
-        throw new Error('Manifest asset exceeds 64 KiB cap')
-      }
-      chunks.push(part.value)
-    }
-    return { content: Buffer.concat(chunks).toString('utf8'), bytes }
-  } finally {
-    reader.releaseLock()
-  }
+  return readBoundedDocument(res, MAX_BYTES)
 }
 
 // Resolves the README a manifest points at: the localized `readmes` map first,
@@ -347,12 +351,11 @@ export async function fetchReadmeAtTag(
 function makePublicRawFetcher(ref: RepoRef, tag: string): FileFetcher {
   const base = rawContentBase(ref, tag)
   return async (path) => {
-    const res = await fetch(base + path.split('/').map(encodeURIComponent).join('/'))
+    const res = await fetch(base + path.split('/').map(encodeURIComponent).join('/'), {
+      signal: AbortSignal.timeout(30_000),
+    })
     if (!res.ok) return null
-    const len = Number(res.headers.get('content-length') ?? 0)
-    if (len > MAX_README_BYTES) throw new Error(`${path} exceeds size cap`)
-    const text = await res.text()
-    return { content: text, bytes: new TextEncoder().encode(text).length }
+    return readBoundedDocument(res, MAX_README_BYTES)
   }
 }
 
@@ -463,8 +466,7 @@ export async function resolveManifest(
       const got = await fetch(candidate.path)
       if (!got) continue
       if (got.bytes > MAX_BYTES) {
-        log.warn({ path: candidate.path, bytes: got.bytes }, 'manifest exceeds size cap — ignored')
-        continue
+        throw new ManifestValidationError([{ path: '/', code: 'size', message: 'Manifest exceeds 64 KiB cap' }])
       }
       const parsed = parseManifestText(got.content)
       const { readmeMarkdown, readmeLocales } = await resolveReadme(fetch, parsed)
